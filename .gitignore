@@ -1,8 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+.eggs/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/
+*.joblib
+*.pkl
+
+# Jupyter
+.ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/
+
+# Node
+node_modules/
+.next/
+out/
+.turbo/
+coverage/
+
+# Environment
 .env
 .env.local
+.env.*.local
+
+# OS
 .DS_Store
-node_modules
-coverage
-dist
-CLAUDE.md
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
 *.log
+
+# Data (large files should not be committed)
+data/raw/
+data/processed/
+*.parquet
+*.csv
+*.db
+
+# ML artifacts
+ml/models/artifacts/
+
+# Docker
+*.override.yml
