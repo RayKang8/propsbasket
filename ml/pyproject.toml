@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "propsbasket-ml"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "nba_api>=1.5",
+    "pandas>=2.2",
+    "numpy>=2.0",
+    "scikit-learn>=1.5",
+    "xgboost>=2.1",
+    "lightgbm>=4.5",
+    "matplotlib>=3.9",
+    "seaborn>=0.13",
+    "sqlalchemy[asyncio]>=2.0",
+    "asyncpg>=0.30",
+    "psycopg2-binary>=2.9",
+    "python-dotenv>=1.0",
+    "requests>=2.32",
+    "joblib>=1.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "jupyter>=1.1",
+    "ipykernel>=6.29",
+    "ruff>=0.8",
+    "pytest>=8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["propsbasket"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
