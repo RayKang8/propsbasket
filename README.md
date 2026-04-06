@@ -133,5 +133,3 @@ docker-compose.yml
 Active development. Core infrastructure (schema, API, ML pipeline) is scaffolded; data ingestion and frontend dashboard are in progress.
 
 ---
-
-*Built by Ray Kang — portfolio project exploring applied ML in sports markets.*
