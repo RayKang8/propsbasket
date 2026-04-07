@@ -1,3 +1,5 @@
+import TopEdgesTable from "./components/TopEdgesTable";
+
 export default function Home() {
   return (
     <div className="min-h-screen bg-zinc-950 text-zinc-100 font-sans">
@@ -33,15 +35,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Placeholder — data table goes here next */}
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 p-12 flex flex-col items-center justify-center text-center gap-3">
-          <div className="text-zinc-500 text-sm">
-            No predictions yet — run the ML pipeline to generate edges.
-          </div>
-          <code className="text-xs text-zinc-600 bg-zinc-800 px-3 py-1.5 rounded-md">
-            python scripts/train.py --model xgboost
-          </code>
-        </div>
+        <TopEdgesTable />
       </main>
     </div>
   );
