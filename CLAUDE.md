@@ -34,7 +34,7 @@ Services: Postgres → `5432`, Backend → `8000`, Frontend → `3000`
 cd backend
 python -m venv .venv && source .venv/bin/activate
 pip install -e ".[dev]"
-uvicorn app.main:app --reload          # dev server
+uvicorn app.main:app --reload --reload-exclude .venv          # dev server
 pytest                                  # tests
 ruff check . && ruff format .          # lint + format
 
