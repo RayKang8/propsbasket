@@ -1,3 +1,4 @@
+import SummaryCards from "./components/SummaryCards";
 import TopEdgesTable from "./components/TopEdgesTable";
 
 export default function Home() {
@@ -35,6 +36,7 @@ export default function Home() {
           </p>
         </div>
 
+        <SummaryCards />
         <TopEdgesTable />
       </main>
     </div>

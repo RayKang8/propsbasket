@@ -3,6 +3,13 @@ import datetime
 from pydantic import BaseModel, computed_field
 
 
+class PredictionSummary(BaseModel):
+    total_predictions: int
+    positive_edge_count: int
+    avg_edge: float
+    best_edge: float
+
+
 class PropLineResponse(BaseModel):
     model_config = {"from_attributes": True}
 
