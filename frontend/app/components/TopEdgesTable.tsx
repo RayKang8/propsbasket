@@ -10,6 +10,11 @@ interface Prediction {
   edge: number;
   edge_pct: string;
   prediction_time: string;
+  player_name: string;
+  player_team: string | null;
+  market_type: string;
+  line_value: number;
+  odds: number;
 }
 
 function EdgeBadge({ edge }: { edge: number }) {
@@ -100,7 +105,10 @@ export default function TopEdgesTable() {
         <thead>
           <tr className="border-b border-zinc-800 bg-zinc-900">
             <th className="text-left px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">
-              Prop ID
+              Player
+            </th>
+            <th className="text-left px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">
+              Prop
             </th>
             <th className="text-left px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">
               Model Prob
@@ -111,15 +119,23 @@ export default function TopEdgesTable() {
             <th className="text-left px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">
               Edge
             </th>
-            <th className="text-left px-4 py-3 text-xs font-medium text-zinc-400 uppercase tracking-wider">
-              Time
-            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-zinc-800 bg-zinc-950">
           {predictions.map((p) => (
             <tr key={p.id} className="hover:bg-zinc-900 transition-colors">
-              <td className="px-4 py-3 text-zinc-400 tabular-nums">#{p.prop_line_id}</td>
+              <td className="px-4 py-3">
+                <div className="font-medium text-white">{p.player_name}</div>
+                {p.player_team && (
+                  <div className="text-xs text-zinc-500 mt-0.5">{p.player_team}</div>
+                )}
+              </td>
+              <td className="px-4 py-3">
+                <div className="text-zinc-200 capitalize">{p.market_type}</div>
+                <div className="text-xs text-zinc-500 mt-0.5 tabular-nums">
+                  Line {p.line_value} &middot; {p.odds > 0 ? "+" : ""}{p.odds}
+                </div>
+              </td>
               <td className="px-4 py-3">
                 <ProbBar value={p.model_probability} />
               </td>
@@ -128,9 +144,6 @@ export default function TopEdgesTable() {
               </td>
               <td className="px-4 py-3">
                 <EdgeBadge edge={p.edge} />
-              </td>
-              <td className="px-4 py-3 text-zinc-500 text-xs tabular-nums">
-                {new Date(p.prediction_time).toLocaleString()}
               </td>
             </tr>
           ))}
