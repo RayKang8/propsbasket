@@ -1,9 +1,11 @@
 """Prediction service: fetch live odds, run ML model, write results to DB."""
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 from pathlib import Path
+from typing import TypedDict
 
 import joblib
 import numpy as np
@@ -39,7 +41,24 @@ _ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
 
 
 # ---------------------------------------------------------------------------
-# Feature helpers
+# Result type returned from the sync compute step
+# ---------------------------------------------------------------------------
+
+
+class PropPrediction(TypedDict):
+    player_name: str
+    player_team_abbrev: str | None
+    home_team_full: str
+    away_team_full: str
+    line_value: float
+    odds_val: int
+    implied_prob: float
+    model_prob: float
+    edge: float
+
+
+# ---------------------------------------------------------------------------
+# Pure sync helpers (safe to run in a thread)
 # ---------------------------------------------------------------------------
 
 
@@ -61,7 +80,9 @@ def _parse_minutes(min_str: object) -> float:
 def _load_game_logs(path: str) -> pd.DataFrame:
     p = Path(path)
     if not p.exists():
-        raise FileNotFoundError(f"Game logs not found at {p}. Run ml/scripts/ingest_nba.py first.")
+        raise FileNotFoundError(
+            f"Game logs not found at {p}. Run ml/scripts/ingest_nba.py first."
+        )
     df = pd.read_parquet(p)
     df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"], format="mixed")
     df["MIN"] = df["MIN"].apply(_parse_minutes)
@@ -72,7 +93,9 @@ def _load_game_logs(path: str) -> pd.DataFrame:
 def _load_team_stats(path: str) -> pd.DataFrame:
     p = Path(path)
     if not p.exists():
-        raise FileNotFoundError(f"Team stats not found at {p}. Run ml/scripts/ingest_nba.py first.")
+        raise FileNotFoundError(
+            f"Team stats not found at {p}. Run ml/scripts/ingest_nba.py first."
+        )
     return pd.read_parquet(p)
 
 
@@ -84,7 +107,6 @@ def _build_abbrev_maps(team_stats: pd.DataFrame) -> tuple[dict, dict]:
 
 
 def _rolling_stats(logs: pd.DataFrame, windows: tuple[int, ...] = (5, 10)) -> dict:
-    """Compute rolling avg/std for PTS and MIN over the last N games (inclusive)."""
     logs = logs.sort_values("GAME_DATE")
     result: dict[str, float] = {}
     for w in windows:
@@ -97,8 +119,144 @@ def _rolling_stats(logs: pd.DataFrame, windows: tuple[int, ...] = (5, 10)) -> di
     return result
 
 
+def _compute_prop_predictions() -> list[PropPrediction]:
+    """Blocking: load model + data, fetch odds, run inference.
+
+    Runs in a thread via asyncio.to_thread — must not touch the event loop.
+    Returns a flat list of PropPrediction dicts ready for DB writes.
+    """
+    model_path = Path(settings.model_path)
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"Model not found at {model_path}. Run ml/scripts/train.py first."
+        )
+    model = joblib.load(model_path)
+
+    game_logs = _load_game_logs(settings.game_logs_path)
+    team_stats = _load_team_stats(settings.team_stats_path)
+    abbrev_to_name, _ = _build_abbrev_maps(team_stats)
+
+    resp = requests.get(
+        _ODDS_API_URL,
+        params={
+            "apiKey": settings.odds_api_key,
+            "regions": "us",
+            "markets": "player_points",
+            "bookmakers": "fanduel",
+            "oddsFormat": "american",
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    events: list[dict] = resp.json()
+    logger.info("Fetched %d events from The Odds API", len(events))
+
+    today = datetime.date.today()
+    results: list[PropPrediction] = []
+
+    for event in events:
+        home_team_full = event["home_team"]
+        away_team_full = event["away_team"]
+
+        for bookmaker in event.get("bookmakers", []):
+            for market in bookmaker.get("markets", []):
+                if market["key"] != "player_points":
+                    continue
+
+                overs: dict[str, dict] = {
+                    o["name"]: o
+                    for o in market.get("outcomes", [])
+                    if o.get("description") == "Over"
+                }
+
+                for player_name, outcome in overs.items():
+                    line_value = float(outcome.get("point", 0))
+                    odds_val = int(outcome.get("price", -110))
+                    implied_prob = _american_to_implied(odds_val)
+
+                    player_logs = game_logs[
+                        game_logs["player_name"].str.lower() == player_name.lower()
+                    ]
+
+                    is_home = 0
+                    player_team_abbrev: str | None = None
+                    opp_full = away_team_full
+
+                    if not player_logs.empty:
+                        last_matchup = player_logs.sort_values("GAME_DATE").iloc[-1]["MATCHUP"]
+                        player_team_abbrev = last_matchup.split()[0]
+                        player_team_full = abbrev_to_name.get(player_team_abbrev)
+                        if player_team_full == home_team_full:
+                            is_home = 1
+                            opp_full = away_team_full
+                        else:
+                            is_home = 0
+                            opp_full = home_team_full
+
+                    opp_row = team_stats[team_stats["TEAM_NAME"] == opp_full]
+                    opp_def_rating = (
+                        float(opp_row["DEF_RATING"].values[0]) if len(opp_row) > 0 else 0.0
+                    )
+                    opp_pace = (
+                        float(opp_row["PACE"].values[0]) if len(opp_row) > 0 else 0.0
+                    )
+
+                    if not player_logs.empty:
+                        last_game_date = (
+                            player_logs.sort_values("GAME_DATE").iloc[-1]["GAME_DATE"]
+                        )
+                        rest_days = (pd.Timestamp(today) - last_game_date).days
+                    else:
+                        rest_days = 3
+
+                    rolling = (
+                        _rolling_stats(player_logs)
+                        if not player_logs.empty
+                        else {
+                            "pts_avg_5g": 0.0,
+                            "pts_avg_10g": 0.0,
+                            "pts_std_5g": 0.0,
+                            "pts_std_10g": 0.0,
+                            "min_avg_5g": 0.0,
+                            "min_avg_10g": 0.0,
+                        }
+                    )
+
+                    features = {
+                        **rolling,
+                        "opp_def_rating": opp_def_rating,
+                        "opp_pace": opp_pace,
+                        "is_home": float(is_home),
+                        "rest_days": float(rest_days),
+                        "is_back_to_back": 1.0 if rest_days == 1 else 0.0,
+                        "line_value": line_value,
+                        "implied_probability": implied_prob,
+                        "line_movement": 0.0,
+                    }
+
+                    X = pd.DataFrame([features])[FEATURE_COLS].fillna(0)
+                    model_prob = float(model.predict_proba(X)[0, 1])
+
+                    results.append(
+                        PropPrediction(
+                            player_name=player_name,
+                            player_team_abbrev=player_team_abbrev,
+                            home_team_full=home_team_full,
+                            away_team_full=away_team_full,
+                            line_value=line_value,
+                            odds_val=odds_val,
+                            implied_prob=implied_prob,
+                            model_prob=model_prob,
+                            edge=model_prob - implied_prob,
+                        )
+                    )
+
+    logger.info("Computed %d predictions", len(results))
+    return results
+
+
 # ---------------------------------------------------------------------------
-# DB helpers
+# Async DB helpers
 # ---------------------------------------------------------------------------
 
 
@@ -141,12 +299,12 @@ async def _get_or_create_game(
 
 
 # ---------------------------------------------------------------------------
-# Main prediction runner
+# Public entry point
 # ---------------------------------------------------------------------------
 
 
 async def run_predictions(db: AsyncSession) -> int:
-    """Fetch live FanDuel player_points odds, run XGBoost model, persist predictions.
+    """Fetch live odds, run model in a thread, persist predictions asynchronously.
 
     Returns the number of new predictions written to the DB.
 
@@ -155,158 +313,54 @@ async def run_predictions(db: AsyncSession) -> int:
     - Player name matching is case-insensitive exact match against nba_api player_name.
     - line_movement defaults to 0.0 (no historical odds tracking yet).
     """
-    # Load model
-    model_path = Path(settings.model_path)
-    if not model_path.exists():
-        raise FileNotFoundError(
-            f"Model not found at {model_path}. Run ml/scripts/train.py first."
-        )
-    model = joblib.load(model_path)
+    # All blocking I/O and CPU work runs in a thread — event loop stays free
+    prop_predictions = await asyncio.to_thread(_compute_prop_predictions)
 
-    # Load reference data
-    game_logs = _load_game_logs(settings.game_logs_path)
-    team_stats = _load_team_stats(settings.team_stats_path)
-    abbrev_to_name, name_to_abbrev = _build_abbrev_maps(team_stats)
-
-    # Fetch live odds
-    resp = requests.get(
-        _ODDS_API_URL,
-        params={
-            "apiKey": settings.odds_api_key,
-            "regions": "us",
-            "markets": "player_points",
-            "bookmakers": "fanduel",
-            "oddsFormat": "american",
-        },
-        timeout=15,
-    )
-    resp.raise_for_status()
-    events: list[dict] = resp.json()
-    logger.info("Fetched %d events from The Odds API", len(events))
-
-    if not events:
-        logger.info("No live NBA events — nothing to predict.")
+    if not prop_predictions:
+        logger.info("No live NBA props — nothing to persist.")
         return 0
 
     sportsbook = await _get_or_create_sportsbook(db, "fanduel")
     today = datetime.date.today()
     now = datetime.datetime.utcnow()
-    count = 0
 
-    for event in events:
-        home_team_full = event["home_team"]
-        away_team_full = event["away_team"]
-        game = await _get_or_create_game(db, today, home_team_full, away_team_full)
+    # Cache games looked up this run to avoid redundant DB queries
+    game_cache: dict[tuple[str, str], Game] = {}
 
-        for bookmaker in event.get("bookmakers", []):
-            for market in bookmaker.get("markets", []):
-                if market["key"] != "player_points":
-                    continue
+    for p in prop_predictions:
+        game_key = (p["home_team_full"], p["away_team_full"])
+        if game_key not in game_cache:
+            game_cache[game_key] = await _get_or_create_game(
+                db, today, p["home_team_full"], p["away_team_full"]
+            )
+        game = game_cache[game_key]
 
-                # Collect Over outcomes keyed by player name
-                overs: dict[str, dict] = {
-                    o["name"]: o
-                    for o in market.get("outcomes", [])
-                    if o.get("description") == "Over"
-                }
+        player_obj = await _get_or_create_player(
+            db, p["player_name"], p["player_team_abbrev"]
+        )
 
-                for player_name, outcome in overs.items():
-                    line_value = float(outcome.get("point", 0))
-                    odds_val = int(outcome.get("price", -110))
-                    implied_prob = _american_to_implied(odds_val)
+        prop_line = PropLine(
+            player_id=player_obj.id,
+            game_id=game.id,
+            sportsbook_id=sportsbook.id,
+            line_value=p["line_value"],
+            odds=p["odds_val"],
+            market_type="points",
+            timestamp=now,
+        )
+        db.add(prop_line)
+        await db.flush()
 
-                    # Match player to game logs (case-insensitive)
-                    player_logs = game_logs[
-                        game_logs["player_name"].str.lower() == player_name.lower()
-                    ]
-
-                    # Determine player's team and is_home from last recorded MATCHUP
-                    is_home = 0
-                    player_team_abbrev: str | None = None
-                    opp_full = away_team_full  # fallback: player is home
-
-                    if not player_logs.empty:
-                        last_matchup = player_logs.sort_values("GAME_DATE").iloc[-1]["MATCHUP"]
-                        player_team_abbrev = last_matchup.split()[0]
-                        player_team_full = abbrev_to_name.get(player_team_abbrev)
-                        if player_team_full == home_team_full:
-                            is_home = 1
-                            opp_full = away_team_full
-                        else:
-                            is_home = 0
-                            opp_full = home_team_full
-
-                    # Opponent defensive context
-                    opp_row = team_stats[team_stats["TEAM_NAME"] == opp_full]
-                    opp_def_rating = (
-                        float(opp_row["DEF_RATING"].values[0]) if len(opp_row) > 0 else 0.0
-                    )
-                    opp_pace = (
-                        float(opp_row["PACE"].values[0]) if len(opp_row) > 0 else 0.0
-                    )
-
-                    # Rest days
-                    if not player_logs.empty:
-                        last_game_date = player_logs.sort_values("GAME_DATE").iloc[-1]["GAME_DATE"]
-                        rest_days = (pd.Timestamp(today) - last_game_date).days
-                    else:
-                        rest_days = 3
-
-                    rolling = (
-                        _rolling_stats(player_logs)
-                        if not player_logs.empty
-                        else {
-                            "pts_avg_5g": 0.0,
-                            "pts_avg_10g": 0.0,
-                            "pts_std_5g": 0.0,
-                            "pts_std_10g": 0.0,
-                            "min_avg_5g": 0.0,
-                            "min_avg_10g": 0.0,
-                        }
-                    )
-
-                    features = {
-                        **rolling,
-                        "opp_def_rating": opp_def_rating,
-                        "opp_pace": opp_pace,
-                        "is_home": float(is_home),
-                        "rest_days": float(rest_days),
-                        "is_back_to_back": 1.0 if rest_days == 1 else 0.0,
-                        "line_value": line_value,
-                        "implied_probability": implied_prob,
-                        "line_movement": 0.0,
-                    }
-
-                    X = pd.DataFrame([features])[FEATURE_COLS].fillna(0)
-                    model_prob = float(model.predict_proba(X)[0, 1])
-                    edge = model_prob - implied_prob
-
-                    player_obj = await _get_or_create_player(
-                        db, player_name, player_team_abbrev
-                    )
-
-                    prop_line = PropLine(
-                        player_id=player_obj.id,
-                        game_id=game.id,
-                        sportsbook_id=sportsbook.id,
-                        line_value=line_value,
-                        odds=odds_val,
-                        market_type="points",
-                        timestamp=now,
-                    )
-                    db.add(prop_line)
-                    await db.flush()
-
-                    prediction = ModelPrediction(
-                        prop_line_id=prop_line.id,
-                        model_probability=model_prob,
-                        implied_probability=implied_prob,
-                        edge=edge,
-                        prediction_time=now,
-                    )
-                    db.add(prediction)
-                    count += 1
+        db.add(
+            ModelPrediction(
+                prop_line_id=prop_line.id,
+                model_probability=p["model_prob"],
+                implied_probability=p["implied_prob"],
+                edge=p["edge"],
+                prediction_time=now,
+            )
+        )
 
     await db.commit()
-    logger.info("Persisted %d predictions", count)
-    return count
+    logger.info("Persisted %d predictions", len(prop_predictions))
+    return len(prop_predictions)
