@@ -44,9 +44,9 @@ def _parse_matchup(df: pd.DataFrame) -> pd.DataFrame:
 def _compute_rest_days(df: pd.DataFrame) -> pd.DataFrame:
     """Add rest_days and is_back_to_back per player, sorted by date."""
     df = df.copy()
-    df = df.sort_values(["PLAYER_ID", "GAME_DATE"])
+    df = df.sort_values(["Player_ID", "GAME_DATE"])
     df["rest_days"] = (
-        df.groupby("PLAYER_ID")["GAME_DATE"]
+        df.groupby("Player_ID")["GAME_DATE"]
         .diff()
         .dt.days
         .fillna(3)  # assume 3 days rest for season opener
@@ -67,7 +67,7 @@ def _simulate_prop_line(df: pd.DataFrame) -> pd.DataFrame:
     """
     df = df.copy()
     df["line_value"] = (
-        df.groupby("PLAYER_ID")["PTS"]
+        df.groupby("Player_ID")["PTS"]
         .transform(lambda x: x.shift(1).rolling(10, min_periods=1).mean())
         .round(1)
     )
