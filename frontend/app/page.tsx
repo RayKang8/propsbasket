@@ -1,3 +1,4 @@
+import RefreshButton from "./components/RefreshButton";
 import SummaryCards from "./components/SummaryCards";
 import TopEdgesTable from "./components/TopEdgesTable";
 
@@ -29,11 +30,14 @@ export default function Home() {
 
       {/* Page header */}
       <main className="max-w-7xl mx-auto px-6 py-10">
-        <div className="mb-8">
-          <h1 className="text-2xl font-semibold text-white">Top Edges</h1>
-          <p className="text-sm text-zinc-400 mt-1">
-            Props where our model probability exceeds the sportsbook implied probability
-          </p>
+        <div className="mb-8 flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold text-white">Top Edges</h1>
+            <p className="text-sm text-zinc-400 mt-1">
+              Props where our model probability exceeds the sportsbook implied probability
+            </p>
+          </div>
+          <RefreshButton />
         </div>
 
         <SummaryCards />
