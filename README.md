@@ -133,3 +133,15 @@ docker-compose.yml
 Active development. Core infrastructure (schema, API, ML pipeline) is scaffolded; data ingestion and frontend dashboard are in progress.
 
 ---
+
+## start up
+  Terminal 1 (backend):                                                                                                                                             
+  cd /Users/raykang/Desktop/propsbasket/backend
+  source .venv/bin/activate                                                                                                                                         
+  uvicorn app.main:app --reload --reload-dir app                                                                                                                    
+   
+  Terminal 2 (frontend):                                                                                                                                           
+  cd /Users/raykang/Desktop/propsbasket/frontend            
+  npm run dev
+                                                                                                                                                                    
+  Then open http://localhost:3000.
