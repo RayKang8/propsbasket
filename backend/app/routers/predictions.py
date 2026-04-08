@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -6,10 +6,23 @@ from sqlalchemy.orm import selectinload
 from app.database import get_db
 from app.models.orm import ModelPrediction, PropLine
 from app.schemas.props import PredictionResponse, PredictionSummary
+from app.services.predictor import run_predictions
 
 router = APIRouter()
 
 _eager = selectinload(ModelPrediction.prop_line).selectinload(PropLine.player)
+
+
+@router.post("/refresh", response_model=dict)
+async def refresh_predictions(db: AsyncSession = Depends(get_db)) -> dict:
+    """Fetch live odds, run the ML model, and persist new predictions."""
+    try:
+        count = await run_predictions(db)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Prediction run failed: {exc}") from exc
+    return {"predictions_created": count}
 
 
 @router.get("/summary", response_model=PredictionSummary)
