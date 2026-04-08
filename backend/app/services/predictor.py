@@ -7,6 +7,8 @@ import logging
 from pathlib import Path
 from typing import TypedDict
 
+import time
+
 import joblib
 import numpy as np
 import pandas as pd
@@ -37,7 +39,7 @@ FEATURE_COLS = [
     "line_movement",
 ]
 
-_ODDS_API_URL = "https://api.the-odds-api.com/v4/sports/basketball_nba/odds"
+_ODDS_API_BASE = "https://api.the-odds-api.com/v4/sports/basketball_nba"
 
 
 # ---------------------------------------------------------------------------
@@ -136,37 +138,56 @@ def _compute_prop_predictions() -> list[PropPrediction]:
     team_stats = _load_team_stats(settings.team_stats_path)
     abbrev_to_name, _ = _build_abbrev_maps(team_stats)
 
-    resp = requests.get(
-        _ODDS_API_URL,
-        params={
-            "apiKey": settings.odds_api_key,
-            "regions": "us",
-            "markets": "player_points",
-            "bookmakers": "fanduel",
-            "oddsFormat": "american",
-        },
+    # Step 1: fetch upcoming events to get event IDs
+    events_resp = requests.get(
+        f"{_ODDS_API_BASE}/events",
+        params={"apiKey": settings.odds_api_key},
         timeout=15,
     )
-    resp.raise_for_status()
-    events: list[dict] = resp.json()
-    logger.info("Fetched %d events from The Odds API", len(events))
+    events_resp.raise_for_status()
+    events: list[dict] = events_resp.json()
+    logger.info("Fetched %d upcoming NBA events", len(events))
 
     today = datetime.date.today()
     results: list[PropPrediction] = []
 
+    # Step 2: for each event fetch player_points odds from the event-specific endpoint
     for event in events:
+        event_id = event["id"]
         home_team_full = event["home_team"]
         away_team_full = event["away_team"]
 
-        for bookmaker in event.get("bookmakers", []):
+        time.sleep(0.5)  # stay well under rate limits
+        props_resp = requests.get(
+            f"{_ODDS_API_BASE}/events/{event_id}/odds",
+            params={
+                "apiKey": settings.odds_api_key,
+                "regions": "us",
+                "markets": "player_points",
+                "bookmakers": "fanduel",
+                "oddsFormat": "american",
+            },
+            timeout=15,
+        )
+        if props_resp.status_code == 404:
+            # No odds available for this event yet
+            continue
+        if props_resp.status_code == 429:
+            logger.warning("Odds API rate limit hit — stopping early with %d results so far", len(results))
+            break
+        props_resp.raise_for_status()
+        event_odds = props_resp.json()
+
+        for bookmaker in event_odds.get("bookmakers", []):
             for market in bookmaker.get("markets", []):
                 if market["key"] != "player_points":
                     continue
 
+                # API shape: name="Over"/"Under", description=player name
                 overs: dict[str, dict] = {
-                    o["name"]: o
+                    o["description"]: o
                     for o in market.get("outcomes", [])
-                    if o.get("description") == "Over"
+                    if o.get("name") == "Over"
                 }
 
                 for player_name, outcome in overs.items():
