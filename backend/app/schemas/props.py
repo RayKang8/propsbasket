@@ -10,6 +10,14 @@ class PredictionSummary(BaseModel):
     best_edge: float
 
 
+class PlayerResponse(BaseModel):
+    model_config = {"from_attributes": True}
+
+    id: int
+    name: str
+    team: str | None
+
+
 class PropLineResponse(BaseModel):
     model_config = {"from_attributes": True}
 
@@ -21,6 +29,7 @@ class PropLineResponse(BaseModel):
     odds: int
     market_type: str
     timestamp: datetime.datetime
+    player: PlayerResponse
 
 
 class PredictionResponse(BaseModel):
@@ -32,6 +41,7 @@ class PredictionResponse(BaseModel):
     implied_probability: float
     edge: float
     prediction_time: datetime.datetime
+    prop_line: PropLineResponse
 
     @computed_field
     @property
@@ -41,24 +51,24 @@ class PredictionResponse(BaseModel):
     @computed_field
     @property
     def player_name(self) -> str:
-        return self.prop_line.player.name  # type: ignore[attr-defined]
+        return self.prop_line.player.name
 
     @computed_field
     @property
     def player_team(self) -> str | None:
-        return self.prop_line.player.team  # type: ignore[attr-defined]
+        return self.prop_line.player.team
 
     @computed_field
     @property
     def market_type(self) -> str:
-        return self.prop_line.market_type  # type: ignore[attr-defined]
+        return self.prop_line.market_type
 
     @computed_field
     @property
     def line_value(self) -> float:
-        return self.prop_line.line_value  # type: ignore[attr-defined]
+        return self.prop_line.line_value
 
     @computed_field
     @property
     def odds(self) -> int:
-        return self.prop_line.odds  # type: ignore[attr-defined]
+        return self.prop_line.odds
