@@ -37,6 +37,54 @@ def get_player_game_logs(player_id: int, season: str = "2024-25") -> pd.DataFram
     return df
 
 
+def get_game_logs_for_players(
+    player_names: list[str],
+    season: str = "2024-25",
+) -> pd.DataFrame:
+    """Fetch game logs for a specific list of player names.
+
+    Looks up each name in nba_api's static player list, skips any that
+    can't be matched, and concatenates results into one DataFrame.
+
+    Args:
+        player_names: Display names, e.g. ["LeBron James", "Stephen Curry"]
+        season: Season string, e.g. "2024-25"
+
+    Returns:
+        DataFrame with one row per game played across all matched players.
+    """
+    all_logs: list[pd.DataFrame] = []
+    not_found: list[str] = []
+
+    for name in player_names:
+        matches = players.find_players_by_full_name(name)
+        if not matches:
+            not_found.append(name)
+            continue
+        player = matches[0]
+        df = get_player_game_logs(player["id"], season=season)
+        if df.empty:
+            continue
+        df["player_name"] = player["full_name"]
+        df["season"] = int(season.split("-")[0])
+        all_logs.append(df)
+
+    if not_found:
+        logger.warning("Could not find nba_api IDs for: %s", not_found)
+
+    if not all_logs:
+        return pd.DataFrame()
+
+    result = pd.concat(all_logs, ignore_index=True)
+    logger.info(
+        "Fetched %d game log rows for %d/%d players",
+        len(result),
+        len(all_logs),
+        len(player_names),
+    )
+    return result
+
+
 def get_team_stats(season: str = "2024-25") -> pd.DataFrame:
     """Fetch league-wide team stats including defensive rating and pace."""
     time.sleep(_REQUEST_DELAY)
