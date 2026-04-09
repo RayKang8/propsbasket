@@ -17,7 +17,7 @@ interface Prediction {
   odds: number;
 }
 
-type SortKey = "edge" | "recent";
+type SortKey = "edge" | "model_prob" | "recent";
 
 const MARKET_LABELS: Record<string, string> = {
   points: "Points",
@@ -82,7 +82,7 @@ export default function TopEdgesTable() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [marketFilter, setMarketFilter] = useState<string>("all");
-  const [sortKey, setSortKey] = useState<SortKey>("edge");
+  const [sortKey, setSortKey] = useState<SortKey>("model_prob");
 
   useEffect(() => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -112,14 +112,17 @@ export default function TopEdgesTable() {
     if (marketFilter !== "all") {
       rows = rows.filter((p) => p.market_type === marketFilter);
     }
-    if (sortKey === "recent") {
+    if (sortKey === "model_prob") {
+      rows = [...rows].sort((a, b) => b.model_probability - a.model_probability);
+    } else if (sortKey === "edge") {
+      rows = [...rows].sort((a, b) => b.edge - a.edge);
+    } else if (sortKey === "recent") {
       rows = [...rows].sort(
         (a, b) =>
           new Date(b.prediction_time).getTime() -
           new Date(a.prediction_time).getTime()
       );
     }
-    // "edge" sort is already the API default
     return rows;
   }, [predictions, marketFilter, sortKey]);
 
@@ -179,6 +182,12 @@ export default function TopEdgesTable() {
         {/* Sort toggle */}
         <div className="flex items-center gap-1">
           <span className="text-xs text-zinc-600 mr-1">Sort:</span>
+          <FilterButton
+            active={sortKey === "model_prob"}
+            onClick={() => setSortKey("model_prob")}
+          >
+            Model Prob
+          </FilterButton>
           <FilterButton
             active={sortKey === "edge"}
             onClick={() => setSortKey("edge")}
