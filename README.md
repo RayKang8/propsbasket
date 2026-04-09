@@ -135,13 +135,21 @@ Active development. Core infrastructure (schema, API, ML pipeline) is scaffolded
 ---
 
 ## start up
-  Terminal 1 (backend):                                                                                                                                             
-  cd /Users/raykang/Desktop/propsbasket/backend
-  source .venv/bin/activate                                                                                                                                         
-  uvicorn app.main:app --reload --reload-dir app                                                                                                                    
-   
-  Terminal 2 (frontend):                                                                                                                                           
-  cd /Users/raykang/Desktop/propsbasket/frontend            
-  npm run dev
+Terminal 1 (backend):                                                                                                                                           
+cd /Users/raykang/Desktop/propsbasket/backend
+source .venv/bin/activate                                                                                                                                         
+uvicorn app.main:app --reload --reload-dir app
                                                                                                                                                                     
-  Then open http://localhost:3000.
+Terminal 2 (frontend):                                                                                                                                          
+cd /Users/raykang/Desktop/propsbasket/frontend
+npm run dev                                                                                                                                                       
+                                                            
+Terminal 3 (ML - live predictions)
+:
+
+cd /Users/raykang/Desktop/propsbasket/ml
+source .venv/bin/activate                                                                                                                                  
+python scripts/predict_live.py
+                                                                                                                                                                    
+Then open http://localhost:3000  
+                                                                                                                                    
