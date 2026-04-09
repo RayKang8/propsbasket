@@ -13,25 +13,37 @@ BASE_URL = "https://api.the-odds-api.com/v4"
 SPORT = "basketball_nba"
 
 
-def get_player_props(
-    api_key: str | None = None,
-    markets: str = "player_points",
-    bookmakers: str = "fanduel",
-) -> list[dict]:
-    """Fetch live player prop lines from The Odds API.
-
-    Args:
-        api_key: API key (defaults to ODDS_API_KEY env var)
-        markets: Comma-separated prop markets, e.g. "player_points,player_rebounds"
-        bookmakers: Comma-separated sportsbooks to include
+def get_events(api_key: str) -> list[dict]:
+    """Fetch today's NBA event list (no odds, just game metadata).
 
     Returns:
-        List of event dicts with nested odds/outcomes data
+        List of event dicts with id, home_team, away_team, commence_time.
     """
-    key = api_key or os.environ["ODDS_API_KEY"]
-    url = f"{BASE_URL}/sports/{SPORT}/odds"
+    url = f"{BASE_URL}/sports/{SPORT}/events"
+    response = requests.get(url, params={"apiKey": api_key}, timeout=10)
+    response.raise_for_status()
+    events = response.json()
+    logger.info("Found %d NBA events today", len(events))
+    return events
+
+
+def get_event_props(
+    event_id: str,
+    api_key: str,
+    markets: str = "player_points",
+    bookmakers: str = "fanduel",
+) -> dict:
+    """Fetch player prop odds for a single event.
+
+    Player props must be fetched per-event via the event-level endpoint.
+    The bulk /odds endpoint only supports game markets (h2h, spreads, totals).
+
+    Returns:
+        Single event dict with bookmakers/markets/outcomes nested inside.
+    """
+    url = f"{BASE_URL}/sports/{SPORT}/events/{event_id}/odds"
     params = {
-        "apiKey": key,
+        "apiKey": api_key,
         "regions": "us",
         "markets": markets,
         "bookmakers": bookmakers,
@@ -39,9 +51,42 @@ def get_player_props(
     }
     response = requests.get(url, params=params, timeout=10)
     response.raise_for_status()
-    data = response.json()
-    logger.info("Fetched %d events from The Odds API", len(data))
-    return data
+    return response.json()
+
+
+def get_player_props(
+    api_key: str | None = None,
+    markets: str = "player_points",
+    bookmakers: str = "fanduel",
+) -> list[dict]:
+    """Fetch live player prop lines for all of today's NBA games.
+
+    Fetches the event list first, then queries props per event (required
+    by The Odds API v4 — player props are not available on the bulk endpoint).
+
+    Args:
+        api_key: API key (defaults to ODDS_API_KEY env var)
+        markets: Comma-separated prop markets, e.g. "player_points,player_rebounds"
+        bookmakers: Comma-separated sportsbooks to include
+
+    Returns:
+        List of event dicts with nested odds/outcomes data, one per game.
+    """
+    key = api_key or os.environ["ODDS_API_KEY"]
+    events = get_events(key)
+    if not events:
+        return []
+
+    results = []
+    for event in events:
+        try:
+            data = get_event_props(event["id"], key, markets=markets, bookmakers=bookmakers)
+            results.append(data)
+        except Exception as exc:
+            logger.warning("Could not fetch props for event %s: %s", event.get("id"), exc)
+
+    logger.info("Fetched props for %d/%d events", len(results), len(events))
+    return results
 
 
 def american_to_implied_prob(odds: int) -> float:
