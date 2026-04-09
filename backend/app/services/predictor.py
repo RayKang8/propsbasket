@@ -13,6 +13,9 @@ import joblib
 import numpy as np
 import pandas as pd
 import requests
+from nba_api.stats.endpoints import playergamelog
+from nba_api.stats.static import players as nba_players
+from nba_api.stats.static import teams as nba_teams
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -79,17 +82,65 @@ def _parse_minutes(min_str: object) -> float:
         return 0.0
 
 
-def _load_game_logs(path: str) -> pd.DataFrame:
-    p = Path(path)
-    if not p.exists():
-        raise FileNotFoundError(
-            f"Game logs not found at {p}. Run ml/scripts/ingest_nba.py first."
-        )
-    df = pd.read_parquet(p)
-    df["GAME_DATE"] = pd.to_datetime(df["GAME_DATE"], format="mixed")
-    df["MIN"] = df["MIN"].apply(_parse_minutes)
-    df["PTS"] = pd.to_numeric(df["PTS"], errors="coerce").fillna(0)
-    return df
+def _current_season() -> str:
+    """Return the current NBA season string, e.g. '2025-26'."""
+    today = datetime.date.today()
+    # NBA season starts in October; before October we're still in the prior season
+    year = today.year if today.month >= 10 else today.year - 1
+    return f"{year}-{str(year + 1)[-2:]}"
+
+
+def _normalize_name(name: str) -> str:
+    """Strip periods from initials/suffixes: 'R.J.' → 'RJ', 'Jr.' → 'Jr'."""
+    return name.replace(".", "").strip()
+
+
+def _find_nba_player(name: str) -> dict | None:
+    matches = nba_players.find_players_by_full_name(name)
+    if matches:
+        return matches[0]
+    normalized = _normalize_name(name)
+    if normalized != name:
+        matches = nba_players.find_players_by_full_name(normalized)
+        if matches:
+            return matches[0]
+    return None
+
+
+def _fetch_game_logs_for_players(player_names: list[str], season: str) -> pd.DataFrame:
+    """Fetch fresh game logs from nba_api for only the named players."""
+    all_logs: list[pd.DataFrame] = []
+    not_found: list[str] = []
+
+    for name in player_names:
+        player = _find_nba_player(name)
+        if not player:
+            not_found.append(name)
+            continue
+        time.sleep(0.6)
+        try:
+            log = playergamelog.PlayerGameLog(player_id=player["id"], season=season)
+            df = log.get_data_frames()[0]
+        except Exception as exc:
+            logger.warning("Failed to fetch logs for %s: %s", name, exc)
+            continue
+        if df.empty:
+            continue
+        df["player_name"] = name  # keep Odds API name for downstream joins
+        all_logs.append(df)
+
+    if not_found:
+        logger.warning("Could not find nba_api IDs for: %s", not_found)
+
+    if not all_logs:
+        return pd.DataFrame()
+
+    result = pd.concat(all_logs, ignore_index=True)
+    result["GAME_DATE"] = pd.to_datetime(result["GAME_DATE"], format="mixed")
+    result["MIN"] = result["MIN"].apply(_parse_minutes)
+    result["PTS"] = pd.to_numeric(result["PTS"], errors="coerce").fillna(0)
+    logger.info("Fetched fresh game logs for %d/%d players", len(all_logs), len(player_names))
+    return result
 
 
 def _load_team_stats(path: str) -> pd.DataFrame:
@@ -101,11 +152,10 @@ def _load_team_stats(path: str) -> pd.DataFrame:
     return pd.read_parquet(p)
 
 
-def _build_abbrev_maps(team_stats: pd.DataFrame) -> tuple[dict, dict]:
-    """Build last-word-of-TEAM_NAME ↔ full-name maps (matches engineering.py logic)."""
-    abbrev_to_name = {name.split()[-1]: name for name in team_stats["TEAM_NAME"]}
-    name_to_abbrev = {v: k for k, v in abbrev_to_name.items()}
-    return abbrev_to_name, name_to_abbrev
+# nba_api abbreviation → full name, e.g. "LAL" → "Los Angeles Lakers"
+_ABBREV_TO_FULLNAME: dict[str, str] = {
+    t["abbreviation"]: t["full_name"] for t in nba_teams.get_teams()
+}
 
 
 def _rolling_stats(logs: pd.DataFrame, windows: tuple[int, ...] = (5, 10)) -> dict:
@@ -122,7 +172,11 @@ def _rolling_stats(logs: pd.DataFrame, windows: tuple[int, ...] = (5, 10)) -> di
 
 
 def _compute_prop_predictions() -> list[PropPrediction]:
-    """Blocking: load model + data, fetch odds, run inference.
+    """Blocking: fetch live odds, ingest fresh game logs, run inference.
+
+    Two-pass approach:
+      Pass 1 — collect all player names from today's props (fast, API only)
+      Pass 2 — fetch fresh nba_api game logs for only those players, then score
 
     Runs in a thread via asyncio.to_thread — must not touch the event loop.
     Returns a flat list of PropPrediction dicts ready for DB writes.
@@ -133,12 +187,9 @@ def _compute_prop_predictions() -> list[PropPrediction]:
             f"Model not found at {model_path}. Run ml/scripts/train.py first."
         )
     model = joblib.load(model_path)
-
-    game_logs = _load_game_logs(settings.game_logs_path)
     team_stats = _load_team_stats(settings.team_stats_path)
-    abbrev_to_name, _ = _build_abbrev_maps(team_stats)
 
-    # Step 1: fetch upcoming events to get event IDs
+    # Pass 1: fetch all events + props, collect into flat list
     events_resp = requests.get(
         f"{_ODDS_API_BASE}/events",
         params={"apiKey": settings.odds_api_key},
@@ -148,18 +199,12 @@ def _compute_prop_predictions() -> list[PropPrediction]:
     events: list[dict] = events_resp.json()
     logger.info("Fetched %d upcoming NBA events", len(events))
 
-    today = datetime.date.today()
-    results: list[PropPrediction] = []
-
-    # Step 2: for each event fetch player_points odds from the event-specific endpoint
+    # Collect raw prop records: {player_name, line, odds, implied_prob, home, away}
+    raw_props: list[dict] = []
     for event in events:
-        event_id = event["id"]
-        home_team_full = event["home_team"]
-        away_team_full = event["away_team"]
-
-        time.sleep(0.5)  # stay well under rate limits
+        time.sleep(0.5)
         props_resp = requests.get(
-            f"{_ODDS_API_BASE}/events/{event_id}/odds",
+            f"{_ODDS_API_BASE}/events/{event['id']}/odds",
             params={
                 "apiKey": settings.odds_api_key,
                 "regions": "us",
@@ -170,10 +215,9 @@ def _compute_prop_predictions() -> list[PropPrediction]:
             timeout=15,
         )
         if props_resp.status_code == 404:
-            # No odds available for this event yet
             continue
         if props_resp.status_code == 429:
-            logger.warning("Odds API rate limit hit — stopping early with %d results so far", len(results))
+            logger.warning("Odds API rate limit hit — stopping early")
             break
         props_resp.raise_for_status()
         event_odds = props_resp.json()
@@ -182,95 +226,96 @@ def _compute_prop_predictions() -> list[PropPrediction]:
             for market in bookmaker.get("markets", []):
                 if market["key"] != "player_points":
                     continue
+                for outcome in market.get("outcomes", []):
+                    if outcome.get("name") != "Over":
+                        continue
+                    raw_props.append({
+                        "player_name": outcome["description"],
+                        "line_value": float(outcome.get("point", 0)),
+                        "odds_val": int(outcome.get("price", -110)),
+                        "home_team_full": event["home_team"],
+                        "away_team_full": event["away_team"],
+                    })
 
-                # API shape: name="Over"/"Under", description=player name
-                overs: dict[str, dict] = {
-                    o["description"]: o
-                    for o in market.get("outcomes", [])
-                    if o.get("name") == "Over"
-                }
+    if not raw_props:
+        return []
 
-                for player_name, outcome in overs.items():
-                    line_value = float(outcome.get("point", 0))
-                    odds_val = int(outcome.get("price", -110))
-                    implied_prob = _american_to_implied(odds_val)
+    # Pass 2: fetch fresh game logs for only today's players
+    player_names = list({p["player_name"] for p in raw_props})
+    season = _current_season()
+    logger.info("Fetching fresh game logs for %d players (season %s)...", len(player_names), season)
+    game_logs = _fetch_game_logs_for_players(player_names, season)
 
-                    player_logs = game_logs[
-                        game_logs["player_name"].str.lower() == player_name.lower()
-                    ]
+    today = datetime.date.today()
+    results: list[PropPrediction] = []
 
-                    is_home = 0
-                    player_team_abbrev: str | None = None
-                    opp_full = away_team_full
+    for prop in raw_props:
+        player_name = prop["player_name"]
+        implied_prob = _american_to_implied(prop["odds_val"])
 
-                    if not player_logs.empty:
-                        last_matchup = player_logs.sort_values("GAME_DATE").iloc[-1]["MATCHUP"]
-                        player_team_abbrev = last_matchup.split()[0]
-                        player_team_full = abbrev_to_name.get(player_team_abbrev)
-                        if player_team_full == home_team_full:
-                            is_home = 1
-                            opp_full = away_team_full
-                        else:
-                            is_home = 0
-                            opp_full = home_team_full
+        player_logs = (
+            game_logs[game_logs["player_name"] == player_name].sort_values("GAME_DATE")
+            if not game_logs.empty
+            else pd.DataFrame()
+        )
 
-                    opp_row = team_stats[team_stats["TEAM_NAME"] == opp_full]
-                    opp_def_rating = (
-                        float(opp_row["DEF_RATING"].values[0]) if len(opp_row) > 0 else 0.0
-                    )
-                    opp_pace = (
-                        float(opp_row["PACE"].values[0]) if len(opp_row) > 0 else 0.0
-                    )
+        # Determine is_home and opponent via nba_api abbreviation map
+        is_home = 0
+        player_team_abbrev: str | None = None
+        opp_full = prop["away_team_full"]
 
-                    if not player_logs.empty:
-                        last_game_date = (
-                            player_logs.sort_values("GAME_DATE").iloc[-1]["GAME_DATE"]
-                        )
-                        rest_days = (pd.Timestamp(today) - last_game_date).days
-                    else:
-                        rest_days = 3
+        if not player_logs.empty:
+            last_matchup = player_logs.iloc[-1]["MATCHUP"]
+            player_team_abbrev = last_matchup.split()[0]
+            player_fullname = _ABBREV_TO_FULLNAME.get(player_team_abbrev, "")
+            if player_fullname == prop["home_team_full"]:
+                is_home = 1
+                opp_full = prop["away_team_full"]
+            else:
+                is_home = 0
+                opp_full = prop["home_team_full"]
 
-                    rolling = (
-                        _rolling_stats(player_logs)
-                        if not player_logs.empty
-                        else {
-                            "pts_avg_5g": 0.0,
-                            "pts_avg_10g": 0.0,
-                            "pts_std_5g": 0.0,
-                            "pts_std_10g": 0.0,
-                            "min_avg_5g": 0.0,
-                            "min_avg_10g": 0.0,
-                        }
-                    )
+        opp_row = team_stats[team_stats["TEAM_NAME"] == opp_full]
+        opp_def_rating = float(opp_row["DEF_RATING"].values[0]) if len(opp_row) > 0 else 0.0
+        opp_pace = float(opp_row["PACE"].values[0]) if len(opp_row) > 0 else 0.0
 
-                    features = {
-                        **rolling,
-                        "opp_def_rating": opp_def_rating,
-                        "opp_pace": opp_pace,
-                        "is_home": float(is_home),
-                        "rest_days": float(rest_days),
-                        "is_back_to_back": 1.0 if rest_days == 1 else 0.0,
-                        "line_value": line_value,
-                        "implied_probability": implied_prob,
-                        "line_movement": 0.0,
-                    }
+        if not player_logs.empty:
+            rest_days = (pd.Timestamp(today) - player_logs.iloc[-1]["GAME_DATE"]).days
+        else:
+            rest_days = 3
 
-                    X = pd.DataFrame([features])[FEATURE_COLS].fillna(0)
-                    model_prob = float(model.predict_proba(X)[0, 1])
+        rolling = (
+            _rolling_stats(player_logs)
+            if not player_logs.empty
+            else {k: 0.0 for k in ["pts_avg_5g", "pts_avg_10g", "pts_std_5g", "pts_std_10g", "min_avg_5g", "min_avg_10g"]}
+        )
 
-                    results.append(
-                        PropPrediction(
-                            player_name=player_name,
-                            player_team_abbrev=player_team_abbrev,
-                            home_team_full=home_team_full,
-                            away_team_full=away_team_full,
-                            line_value=line_value,
-                            odds_val=odds_val,
-                            implied_prob=implied_prob,
-                            model_prob=model_prob,
-                            edge=model_prob - implied_prob,
-                        )
-                    )
+        features = {
+            **rolling,
+            "opp_def_rating": opp_def_rating,
+            "opp_pace": opp_pace,
+            "is_home": float(is_home),
+            "rest_days": float(rest_days),
+            "is_back_to_back": 1.0 if rest_days == 1 else 0.0,
+            "line_value": prop["line_value"],
+            "implied_probability": implied_prob,
+            "line_movement": 0.0,
+        }
+
+        X = pd.DataFrame([features])[FEATURE_COLS].fillna(0)
+        model_prob = float(model.predict_proba(X)[0, 1])
+
+        results.append(PropPrediction(
+            player_name=player_name,
+            player_team_abbrev=player_team_abbrev,
+            home_team_full=prop["home_team_full"],
+            away_team_full=prop["away_team_full"],
+            line_value=prop["line_value"],
+            odds_val=prop["odds_val"],
+            implied_prob=implied_prob,
+            model_prob=model_prob,
+            edge=model_prob - implied_prob,
+        ))
 
     logger.info("Computed %d predictions", len(results))
     return results
