@@ -1,3 +1,5 @@
+import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +13,10 @@ from app.services.predictor import run_predictions
 router = APIRouter()
 
 _eager = selectinload(ModelPrediction.prop_line).selectinload(PropLine.player)
+
+
+def _today_start() -> datetime.datetime:
+    return datetime.datetime.combine(datetime.date.today(), datetime.time.min)
 
 
 @router.post("/refresh", response_model=dict)
@@ -27,14 +33,14 @@ async def refresh_predictions(db: AsyncSession = Depends(get_db)) -> dict:
 
 @router.get("/summary", response_model=PredictionSummary)
 async def prediction_summary(db: AsyncSession = Depends(get_db)) -> PredictionSummary:
-    """Aggregate stats across all predictions."""
+    """Aggregate stats across today's predictions."""
     row = await db.execute(
         select(
             func.count(ModelPrediction.id),
             func.sum(case((ModelPrediction.edge > 0, 1), else_=0)),
             func.avg(ModelPrediction.edge),
             func.max(ModelPrediction.edge),
-        )
+        ).where(ModelPrediction.prediction_time >= _today_start())
     )
     total, positive, avg_edge, best_edge = row.one()
     return PredictionSummary(
@@ -47,10 +53,11 @@ async def prediction_summary(db: AsyncSession = Depends(get_db)) -> PredictionSu
 
 @router.get("/", response_model=list[PredictionResponse])
 async def list_predictions(db: AsyncSession = Depends(get_db)) -> list[ModelPrediction]:
-    """List model predictions, most recent first."""
+    """List today's model predictions, most recent first."""
     result = await db.execute(
         select(ModelPrediction)
         .options(_eager)
+        .where(ModelPrediction.prediction_time >= _today_start())
         .order_by(ModelPrediction.prediction_time.desc())
         .limit(100)
     )
@@ -62,10 +69,11 @@ async def top_edges(
     limit: int = Query(default=10, ge=1, le=50),
     db: AsyncSession = Depends(get_db),
 ) -> list[ModelPrediction]:
-    """Return props ranked by edge (model_probability − implied_probability), highest first."""
+    """Return today's props ranked by edge (model_probability − implied_probability), highest first."""
     result = await db.execute(
         select(ModelPrediction)
         .options(_eager)
+        .where(ModelPrediction.prediction_time >= _today_start())
         .order_by(ModelPrediction.edge.desc())
         .limit(limit)
     )

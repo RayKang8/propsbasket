@@ -13,7 +13,7 @@ import joblib
 import numpy as np
 import pandas as pd
 import requests
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -340,6 +340,16 @@ async def run_predictions(db: AsyncSession) -> int:
     if not prop_predictions:
         logger.info("No live NBA props — nothing to persist.")
         return 0
+
+    # Clear today's predictions before inserting fresh ones so refresh is idempotent
+    today_start = datetime.datetime.combine(datetime.date.today(), datetime.time.min)
+    await db.execute(
+        delete(ModelPrediction).where(ModelPrediction.prediction_time >= today_start)
+    )
+    await db.execute(
+        delete(PropLine).where(PropLine.timestamp >= today_start)
+    )
+    await db.flush()
 
     sportsbook = await _get_or_create_sportsbook(db, "fanduel")
     today = datetime.date.today()
