@@ -37,17 +37,43 @@ def get_player_game_logs(player_id: int, season: str = "2024-25") -> pd.DataFram
     return df
 
 
+def _normalize_name(name: str) -> str:
+    """Normalize a player name for nba_api lookup.
+
+    Handles common formatting differences between data sources:
+      - Removes periods from initials: "R.J." → "RJ"
+      - Strips trailing punctuation from suffixes: "Jr." → "Jr"
+    """
+    # Remove periods that are part of initials or suffixes (e.g. R.J., Jr.)
+    return name.replace(".", "").strip()
+
+
+def _find_player(name: str) -> dict | None:
+    """Look up a player by name, falling back to a normalized version."""
+    matches = players.find_players_by_full_name(name)
+    if matches:
+        return matches[0]
+    normalized = _normalize_name(name)
+    if normalized != name:
+        matches = players.find_players_by_full_name(normalized)
+        if matches:
+            logger.debug("Matched '%s' via normalized name '%s'", name, normalized)
+            return matches[0]
+    return None
+
+
 def get_game_logs_for_players(
     player_names: list[str],
     season: str = "2024-25",
 ) -> pd.DataFrame:
     """Fetch game logs for a specific list of player names.
 
-    Looks up each name in nba_api's static player list, skips any that
-    can't be matched, and concatenates results into one DataFrame.
+    Looks up each name in nba_api's static player list (with name
+    normalization fallback), skips any that can't be matched, and
+    concatenates results into one DataFrame.
 
     Args:
-        player_names: Display names, e.g. ["LeBron James", "Stephen Curry"]
+        player_names: Display names, e.g. ["LeBron James", "R.J. Barrett"]
         season: Season string, e.g. "2024-25"
 
     Returns:
@@ -57,15 +83,15 @@ def get_game_logs_for_players(
     not_found: list[str] = []
 
     for name in player_names:
-        matches = players.find_players_by_full_name(name)
-        if not matches:
+        player = _find_player(name)
+        if not player:
             not_found.append(name)
             continue
-        player = matches[0]
         df = get_player_game_logs(player["id"], season=season)
         if df.empty:
             continue
-        df["player_name"] = player["full_name"]
+        # Use the original Odds API name so downstream joins work correctly
+        df["player_name"] = name
         df["season"] = int(season.split("-")[0])
         all_logs.append(df)
 
