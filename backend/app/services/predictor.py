@@ -39,6 +39,7 @@ FEATURE_COLS = [
     "games_vs_opp",
     "opp_def_rating",
     "opp_pace",
+    "game_total",
     "is_home",
     "rest_days",
     "is_back_to_back",
@@ -226,7 +227,7 @@ def _compute_prop_predictions() -> list[PropPrediction]:
             params={
                 "apiKey": settings.odds_api_key,
                 "regions": "us",
-                "markets": "player_points",
+                "markets": "player_points,totals",
                 "bookmakers": "fanduel",
                 "oddsFormat": "american",
             },
@@ -239,6 +240,16 @@ def _compute_prop_predictions() -> list[PropPrediction]:
             break
         props_resp.raise_for_status()
         event_odds = props_resp.json()
+
+        # Extract game total (O/U line) from totals market
+        game_total = 225.0  # NBA average fallback
+        for bookmaker in event_odds.get("bookmakers", []):
+            for market in bookmaker.get("markets", []):
+                if market["key"] == "totals":
+                    for outcome in market.get("outcomes", []):
+                        if outcome.get("name") == "Over":
+                            game_total = float(outcome.get("point", 225.0))
+                            break
 
         for bookmaker in event_odds.get("bookmakers", []):
             for market in bookmaker.get("markets", []):
@@ -253,6 +264,7 @@ def _compute_prop_predictions() -> list[PropPrediction]:
                         "odds_val": int(outcome.get("price", -110)),
                         "home_team_full": event["home_team"],
                         "away_team_full": event["away_team"],
+                        "game_total": game_total,
                     })
 
     if not raw_props:
@@ -320,6 +332,7 @@ def _compute_prop_predictions() -> list[PropPrediction]:
             **rolling,
             "opp_def_rating": opp_def_rating,
             "opp_pace": opp_pace,
+            "game_total": prop.get("game_total", 225.0),
             "is_home": float(is_home),
             "rest_days": float(rest_days),
             "is_back_to_back": 1.0 if rest_days == 1 else 0.0,

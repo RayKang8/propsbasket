@@ -185,6 +185,7 @@ def build_prediction_rows(
             **rolling,
             "opp_def_rating": opp_ctx["opp_def_rating"],
             "opp_pace": opp_ctx["opp_pace"],
+            "game_total": prop.get("game_total", 225.0),
             "is_home": is_home,
             "rest_days": rest,
             "is_back_to_back": b2b,

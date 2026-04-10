@@ -16,6 +16,7 @@ FEATURE_COLS = [
     "games_vs_opp",
     "opp_def_rating",
     "opp_pace",
+    "game_total",
     "is_home",
     "rest_days",
     "is_back_to_back",
@@ -64,7 +65,11 @@ def add_game_context(df: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame
             "PACE": "opp_pace",
         }
     )
-    return df.merge(opp_stats, on="opp_team_name", how="left")
+    df = df.merge(opp_stats, on="opp_team_name", how="left")
+    # Approximate game total from pace: both teams * possessions per game * ~1.12 pts/possession
+    # Used for training only — real Odds API total replaces this at inference time
+    df["game_total"] = df["opp_pace"] * 2 * 1.12
+    return df
 
 def add_vs_opponent_stats(df: pd.DataFrame) -> pd.DataFrame:
     """Add player's historical average points against each specific opponent.

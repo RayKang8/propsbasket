@@ -56,7 +56,7 @@ def get_event_props(
 
 def get_player_props(
     api_key: str | None = None,
-    markets: str = "player_points",
+    markets: str = "player_points,totals",
     bookmakers: str = "fanduel",
 ) -> list[dict]:
     """Fetch live player prop lines for all of today's NBA games.
@@ -117,13 +117,26 @@ def parse_props(events: list[dict], bookmaker: str = "fanduel") -> list[dict]:
         game_id = event.get("id", "")
         commence_time = event.get("commence_time", "")
 
+        # Extract game total (O/U line) from totals market first
+        game_total = 225.0
+        for bm in event.get("bookmakers", []):
+            if bm["key"] != bookmaker:
+                continue
+            for market in bm.get("markets", []):
+                if market["key"] == "totals":
+                    for outcome in market.get("outcomes", []):
+                        if outcome.get("name") == "Over":
+                            game_total = float(outcome.get("point", 225.0))
+                            break
+
         for bm in event.get("bookmakers", []):
             if bm["key"] != bookmaker:
                 continue
             for market in bm.get("markets", []):
                 market_key = market["key"]
+                if market_key == "totals":
+                    continue  # already handled above
                 for outcome in market.get("outcomes", []):
-                    # Outcomes come in Over/Under pairs; we want the Over
                     if outcome.get("name") == "Over":
                         records.append({
                             "player_name": outcome.get("description", ""),
@@ -134,6 +147,7 @@ def parse_props(events: list[dict], bookmaker: str = "fanduel") -> list[dict]:
                             "away_team": away_team,
                             "game_id": game_id,
                             "commence_time": commence_time,
+                            "game_total": game_total,
                         })
     logger.info("Parsed %d prop records from %d events", len(records), len(events))
     return records
