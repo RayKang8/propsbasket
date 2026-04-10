@@ -11,11 +11,11 @@ from propsbasket.ingestion.nba_stats import get_all_active_players, get_player_g
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 RAW_DIR = Path("data/raw")
-DELAY_MIN = 3.0
-DELAY_MAX = 6.0
+DELAY_MIN = 1.5
+DELAY_MAX = 3.0
 MAX_RETRIES = 5
 COOLDOWN_EVERY = 50   # pause for longer every N players to avoid IP throttle
-COOLDOWN_SECS = 60
+COOLDOWN_SECS = 30
 
 
 def fetch_with_retry(player, season):
