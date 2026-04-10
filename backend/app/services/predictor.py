@@ -35,6 +35,8 @@ FEATURE_COLS = [
     "fga_avg_5g",
     "fga_avg_10g",
     "pts_trend",
+    "pts_avg_vs_opp",
+    "games_vs_opp",
     "opp_def_rating",
     "opp_pace",
     "is_home",
