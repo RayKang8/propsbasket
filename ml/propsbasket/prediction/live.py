@@ -37,19 +37,29 @@ def _rolling_stats(games: pd.DataFrame) -> dict:
     where we're predicting the *next* (unseen) game.
     """
     def tail_mean(col: str, n: int) -> float:
-        return float(games[col].iloc[-n:].mean()) if not games.empty else 0.0
+        if games.empty or col not in games.columns:
+            return 0.0
+        return float(games[col].iloc[-n:].mean())
 
     def tail_std(col: str, n: int) -> float:
+        if games.empty or col not in games.columns:
+            return 0.0
         vals = games[col].iloc[-n:]
         return float(vals.std()) if len(vals) > 1 else 0.0
 
+    pts_avg_5g = tail_mean("PTS", 5)
+    pts_avg_10g = tail_mean("PTS", 10)
+
     return {
-        "pts_avg_5g": tail_mean("PTS", 5),
-        "pts_avg_10g": tail_mean("PTS", 10),
+        "pts_avg_5g": pts_avg_5g,
+        "pts_avg_10g": pts_avg_10g,
         "pts_std_5g": tail_std("PTS", 5),
         "pts_std_10g": tail_std("PTS", 10),
         "min_avg_5g": tail_mean("MIN", 5),
         "min_avg_10g": tail_mean("MIN", 10),
+        "fga_avg_5g": tail_mean("FGA", 5),
+        "fga_avg_10g": tail_mean("FGA", 10),
+        "pts_trend": pts_avg_5g - pts_avg_10g,
     }
 
 

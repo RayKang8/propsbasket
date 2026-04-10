@@ -9,6 +9,9 @@ FEATURE_COLS = [
     "pts_std_10g",
     "min_avg_5g",
     "min_avg_10g",
+    "fga_avg_5g",
+    "fga_avg_10g",
+    "pts_trend",
     "opp_def_rating",
     "opp_pace",
     "is_home",
@@ -36,6 +39,13 @@ def add_rolling_stats(df: pd.DataFrame, windows: list[int] | None = None) -> pd.
             df.groupby("Player_ID")["MIN"]
             .transform(lambda x: x.shift(1).rolling(w, min_periods=1).mean())
         )
+        df[f"fga_avg_{w}g"] = (
+            df.groupby("Player_ID")["FGA"]
+            .transform(lambda x: x.shift(1).rolling(w, min_periods=1).mean())
+        )
+    # Trend: positive = player scoring more recently than their 10-game baseline (hot)
+    #        negative = player scoring less recently (cold)
+    df["pts_trend"] = df["pts_avg_5g"] - df["pts_avg_10g"]
     return df
 
 def add_game_context(df: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame:

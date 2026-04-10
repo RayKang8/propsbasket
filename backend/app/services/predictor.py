@@ -32,6 +32,9 @@ FEATURE_COLS = [
     "pts_std_10g",
     "min_avg_5g",
     "min_avg_10g",
+    "fga_avg_5g",
+    "fga_avg_10g",
+    "pts_trend",
     "opp_def_rating",
     "opp_pace",
     "is_home",
@@ -165,9 +168,12 @@ def _rolling_stats(logs: pd.DataFrame, windows: tuple[int, ...] = (5, 10)) -> di
         recent = logs.tail(w)
         pts = recent["PTS"].values
         mins = recent["MIN"].values
+        fga = recent["FGA"].values if "FGA" in recent.columns else np.array([])
         result[f"pts_avg_{w}g"] = float(np.mean(pts)) if len(pts) > 0 else 0.0
         result[f"pts_std_{w}g"] = float(np.std(pts, ddof=1)) if len(pts) >= 2 else 0.0
         result[f"min_avg_{w}g"] = float(np.mean(mins)) if len(mins) > 0 else 0.0
+        result[f"fga_avg_{w}g"] = float(np.mean(fga)) if len(fga) > 0 else 0.0
+    result["pts_trend"] = result["pts_avg_5g"] - result["pts_avg_10g"]
     return result
 
 
