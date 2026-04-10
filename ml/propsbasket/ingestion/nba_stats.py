@@ -12,7 +12,7 @@ from nba_api.stats.static import players
 logger = logging.getLogger(__name__)
 
 # nba_api is rate-limited; stay under ~1 req/sec
-_REQUEST_DELAY = 0.6
+_REQUEST_DELAY = 1.5
 
 
 def get_all_active_players() -> list[dict]:
