@@ -161,7 +161,7 @@ _ABBREV_TO_FULLNAME: dict[str, str] = {
 }
 
 
-def _rolling_stats(logs: pd.DataFrame, windows: tuple[int, ...] = (5, 10)) -> dict:
+def _rolling_stats(logs: pd.DataFrame, opp_abbrev: str = "", windows: tuple[int, ...] = (5, 10)) -> dict:
     logs = logs.sort_values("GAME_DATE")
     result: dict[str, float] = {}
     for w in windows:
@@ -174,6 +174,16 @@ def _rolling_stats(logs: pd.DataFrame, windows: tuple[int, ...] = (5, 10)) -> di
         result[f"min_avg_{w}g"] = float(np.mean(mins)) if len(mins) > 0 else 0.0
         result[f"fga_avg_{w}g"] = float(np.mean(fga)) if len(fga) > 0 else 0.0
     result["pts_trend"] = result["pts_avg_5g"] - result["pts_avg_10g"]
+
+    # Player vs tonight's opponent history
+    if opp_abbrev and "opponent" in logs.columns:
+        vs_opp = logs[logs["opponent"] == opp_abbrev]["PTS"]
+        result["pts_avg_vs_opp"] = float(vs_opp.mean()) if not vs_opp.empty else result["pts_avg_10g"]
+        result["games_vs_opp"] = float(len(vs_opp))
+    else:
+        result["pts_avg_vs_opp"] = result["pts_avg_10g"]
+        result["games_vs_opp"] = 0.0
+
     return result
 
 
@@ -285,15 +295,23 @@ def _compute_prop_predictions() -> list[PropPrediction]:
         opp_def_rating = float(opp_row["DEF_RATING"].values[0]) if len(opp_row) > 0 else 0.0
         opp_pace = float(opp_row["PACE"].values[0]) if len(opp_row) > 0 else 0.0
 
+        # Opponent abbreviation for vs-opp history lookup
+        fullname_to_abbrev = {v: k for k, v in _ABBREV_TO_FULLNAME.items()}
+        opp_abbrev = fullname_to_abbrev.get(opp_full, "")
+
         if not player_logs.empty:
             rest_days = (pd.Timestamp(today) - player_logs.iloc[-1]["GAME_DATE"]).days
+            # Add opponent column for vs-opp lookup
+            if "opponent" not in player_logs.columns:
+                player_logs = player_logs.copy()
+                player_logs["opponent"] = player_logs["MATCHUP"].str.split().str[-1]
         else:
             rest_days = 3
 
         rolling = (
-            _rolling_stats(player_logs)
+            _rolling_stats(player_logs, opp_abbrev=opp_abbrev)
             if not player_logs.empty
-            else {k: 0.0 for k in ["pts_avg_5g", "pts_avg_10g", "pts_std_5g", "pts_std_10g", "min_avg_5g", "min_avg_10g"]}
+            else {k: 0.0 for k in ["pts_avg_5g", "pts_avg_10g", "pts_std_5g", "pts_std_10g", "min_avg_5g", "min_avg_10g", "fga_avg_5g", "fga_avg_10g", "pts_trend", "pts_avg_vs_opp", "games_vs_opp"]}
         )
 
         features = {

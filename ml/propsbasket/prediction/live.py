@@ -30,11 +30,15 @@ def _parse_minutes(min_str: object) -> float:
         return 0.0
 
 
-def _rolling_stats(games: pd.DataFrame) -> dict:
+def _rolling_stats(games: pd.DataFrame, opp_abbrev: str = "") -> dict:
     """Compute rolling form features from a player's sorted game log.
 
     Uses actual last-N games with no shift — appropriate for inference
     where we're predicting the *next* (unseen) game.
+
+    Args:
+        games: Player's game logs sorted ascending by GAME_DATE.
+        opp_abbrev: Tonight's opponent abbreviation (e.g. 'GSW') for vs-opp lookup.
     """
     def tail_mean(col: str, n: int) -> float:
         if games.empty or col not in games.columns:
@@ -50,6 +54,15 @@ def _rolling_stats(games: pd.DataFrame) -> dict:
     pts_avg_5g = tail_mean("PTS", 5)
     pts_avg_10g = tail_mean("PTS", 10)
 
+    # Player vs tonight's opponent history
+    if opp_abbrev and "opponent" in games.columns:
+        vs_opp = games[games["opponent"] == opp_abbrev]["PTS"]
+        pts_avg_vs_opp = float(vs_opp.mean()) if not vs_opp.empty else pts_avg_10g
+        games_vs_opp = float(len(vs_opp))
+    else:
+        pts_avg_vs_opp = pts_avg_10g
+        games_vs_opp = 0.0
+
     return {
         "pts_avg_5g": pts_avg_5g,
         "pts_avg_10g": pts_avg_10g,
@@ -60,6 +73,8 @@ def _rolling_stats(games: pd.DataFrame) -> dict:
         "fga_avg_5g": tail_mean("FGA", 5),
         "fga_avg_10g": tail_mean("FGA", 10),
         "pts_trend": pts_avg_5g - pts_avg_10g,
+        "pts_avg_vs_opp": pts_avg_vs_opp,
+        "games_vs_opp": games_vs_opp,
     }
 
 
@@ -123,13 +138,13 @@ def build_prediction_rows(
             logger.warning("No game logs for '%s' — skipping prop", player_name)
             continue
 
-        rolling = _rolling_stats(player_games)
         rest, b2b = _rest_days(player_games, today)
 
         # Determine is_home and opponent using player's team abbreviation + Odds API game
         last_matchup = player_games["MATCHUP"].iloc[-1]
         player_abbrev = last_matchup.split()[0]  # e.g. "LAL" from "LAL vs. GSW"
         player_fullname = abbrev_map.get(player_abbrev, "")
+        fullname_to_abbrev = {v: k for k, v in abbrev_map.items()}
 
         home_team = prop.get("home_team", "")
         away_team = prop.get("away_team", "")
@@ -141,7 +156,6 @@ def build_prediction_rows(
             is_home = 0
             opp_fullname = home_team
         else:
-            # Fallback: use last game's home/away indicator; opponent unknown
             is_home = int("vs." in last_matchup)
             opp_fullname = ""
             logger.debug(
@@ -149,6 +163,14 @@ def build_prediction_rows(
                 player_name, player_abbrev, home_team, away_team,
             )
 
+        opp_abbrev = fullname_to_abbrev.get(opp_fullname, "")
+
+        # Add opponent column to game logs for vs-opp lookup
+        if "opponent" not in player_games.columns:
+            player_games = player_games.copy()
+            player_games["opponent"] = player_games["MATCHUP"].str.split().str[-1]
+
+        rolling = _rolling_stats(player_games, opp_abbrev=opp_abbrev)
         opp_ctx = opp_lookup.get(opp_fullname, {"opp_def_rating": 0.0, "opp_pace": 0.0})
 
         rows.append({

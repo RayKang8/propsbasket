@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from propsbasket.features.engineering import add_game_context, add_rolling_stats, add_target
+from propsbasket.features.engineering import add_game_context, add_rolling_stats, add_target, add_vs_opponent_stats
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -121,6 +121,9 @@ def main() -> None:
     else:
         df["opp_def_rating"] = float("nan")
         df["opp_pace"] = float("nan")
+
+    # Player vs opponent historical scoring
+    df = add_vs_opponent_stats(df)
 
     # Simulated prop line features (for training only)
     df = _simulate_prop_line(df)

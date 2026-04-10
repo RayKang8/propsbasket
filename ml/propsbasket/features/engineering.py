@@ -12,6 +12,8 @@ FEATURE_COLS = [
     "fga_avg_5g",
     "fga_avg_10g",
     "pts_trend",
+    "pts_avg_vs_opp",
+    "games_vs_opp",
     "opp_def_rating",
     "opp_pace",
     "is_home",
@@ -63,6 +65,33 @@ def add_game_context(df: pd.DataFrame, team_stats: pd.DataFrame) -> pd.DataFrame
         }
     )
     return df.merge(opp_stats, on="opp_team_name", how="left")
+
+def add_vs_opponent_stats(df: pd.DataFrame) -> pd.DataFrame:
+    """Add player's historical average points against each specific opponent.
+
+    Uses expanding mean with shift(1) to avoid leakage — only uses games
+    against that opponent that occurred *before* the current game.
+
+    Requires 'opponent' column (team abbreviation, e.g. 'GSW') and 'Player_ID'.
+    Falls back to the player's overall pts_avg_10g when no prior history exists.
+    """
+    df = df.sort_values("GAME_DATE").copy()
+
+    df["pts_avg_vs_opp"] = (
+        df.groupby(["Player_ID", "opponent"])["PTS"]
+        .transform(lambda x: x.shift(1).expanding(min_periods=1).mean())
+    )
+    df["games_vs_opp"] = (
+        df.groupby(["Player_ID", "opponent"])["PTS"]
+        .transform(lambda x: x.shift(1).expanding(min_periods=1).count())
+    )
+
+    # For first-ever game vs an opponent, fall back to overall 10-game average
+    df["pts_avg_vs_opp"] = df["pts_avg_vs_opp"].fillna(df["pts_avg_10g"])
+    df["games_vs_opp"] = df["games_vs_opp"].fillna(0)
+
+    return df
+
 
 def add_target(df: pd.DataFrame, line_col: str = "line_value") -> pd.DataFrame:
     """Add binary target: 1 if player scored more than the prop line."""
