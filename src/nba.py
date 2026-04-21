@@ -76,10 +76,41 @@ def find_player(name: str) -> dict | None:
 
 
 def get_game_logs(player_id: int, season: str = "2024-25") -> pd.DataFrame:
-    """Fetch full season game logs for a player."""
+    """Fetch regular season + playoff game logs for a player, combined.
+
+    Playoff games are fetched separately and tagged with a GAME_TYPE column
+    so the formula can show how many games are regular season vs playoffs.
+    """
+    frames = []
+
+    # Regular season
     time.sleep(_DELAY)
-    log = playergamelog.PlayerGameLog(player_id=player_id, season=season)
-    df = log.get_data_frames()[0]
+    reg = playergamelog.PlayerGameLog(
+        player_id=player_id, season=season, season_type_all_star="Regular Season"
+    )
+    reg_df = reg.get_data_frames()[0]
+    if not reg_df.empty:
+        reg_df["GAME_TYPE"] = "Regular Season"
+        frames.append(reg_df)
+
+    # Playoffs (may be empty if playoffs haven't started or player isn't in)
+    time.sleep(_DELAY)
+    try:
+        po = playergamelog.PlayerGameLog(
+            player_id=player_id, season=season, season_type_all_star="Playoffs"
+        )
+        po_df = po.get_data_frames()[0]
+        if not po_df.empty:
+            po_df["GAME_TYPE"] = "Playoffs"
+            frames.append(po_df)
+    except Exception:
+        pass
+
+    if not frames:
+        return pd.DataFrame()
+
+    df = pd.concat(frames, ignore_index=True)
+
     # Add PRA computed column
     if {"PTS", "REB", "AST"}.issubset(df.columns):
         df["PRA"] = df["PTS"] + df["REB"] + df["AST"]

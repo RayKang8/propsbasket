@@ -53,3 +53,5 @@ ml/models/artifacts/
 
 # Docker
 *.override.yml
+
+personal.txt

@@ -154,7 +154,19 @@ def analyze_prop(
 
     s1_hits, s1_games, s1_rate = _hit_rate(game_logs, stat_col, threshold)
     print(f"  {player['full_name']} has hit {prop_line} in {s1_hits}/{s1_games} games this season")
-    print(f"  Season hit rate: {s1_rate * 100:.1f}%")
+
+    # Show regular season vs playoff breakdown if both exist
+    if "GAME_TYPE" in game_logs.columns:
+        reg_logs = game_logs[game_logs["GAME_TYPE"] == "Regular Season"]
+        po_logs = game_logs[game_logs["GAME_TYPE"] == "Playoffs"]
+        if not reg_logs.empty:
+            rh, rg, rr = _hit_rate(reg_logs, stat_col, threshold)
+            print(f"    Regular season: {rh}/{rg} = {rr*100:.1f}%")
+        if not po_logs.empty:
+            ph, pg, pr = _hit_rate(po_logs, stat_col, threshold)
+            print(f"    Playoffs:       {ph}/{pg} = {pr*100:.1f}%")
+
+    print(f"  Season hit rate (combined): {s1_rate * 100:.1f}%")
 
     # ── STEP 2: Similar defense hit rate ─────────────────────────────────────
     print(f"\n{'─'*66}")

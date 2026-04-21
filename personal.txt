@@ -1,0 +1,5 @@
+  # Interactive (prompts you)                                                                                                                                       
+  python analyze.py                                         
+
+  # One-liner
+  python analyze.py --player "LeBron James" --line "20+ points" --odds -166 --opponent "Golden State Warriors"
