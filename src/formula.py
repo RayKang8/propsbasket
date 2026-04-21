@@ -210,16 +210,13 @@ def analyze_prop(
 
     s1_hits, s1_games, s1_rate = _hit_rate(game_logs, stat_col, threshold)
 
-    # Regular season vs playoff breakdown
+    # Breakdown by game type
     if "GAME_TYPE" in game_logs.columns:
-        reg = game_logs[game_logs["GAME_TYPE"] == "Regular Season"]
-        po = game_logs[game_logs["GAME_TYPE"] == "Playoffs"]
-        if not reg.empty:
-            rh, rg, rr = _hit_rate(reg, stat_col, threshold)
-            print(f"  Regular season: {rh}/{rg} games = {rr*100:.1f}%")
-        if not po.empty:
-            ph, pg, pr = _hit_rate(po, stat_col, threshold)
-            print(f"  Playoffs:       {ph}/{pg} games = {pr*100:.1f}%")
+        for label in ["Regular Season", "Play-In", "Playoffs"]:
+            subset = game_logs[game_logs["GAME_TYPE"] == label]
+            if not subset.empty:
+                h, g, r = _hit_rate(subset, stat_col, threshold)
+                print(f"  {label+':':<18} {h}/{g} games = {r*100:.1f}%")
         print()
 
     print(f"  Season hit rate: {s1_hits}/{s1_games} games = {s1_rate*100:.1f}%")

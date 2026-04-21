@@ -93,7 +93,20 @@ def get_game_logs(player_id: int, season: str = "2025-26") -> pd.DataFrame:
         reg_df["GAME_TYPE"] = "Regular Season"
         frames.append(reg_df)
 
-    # Playoffs (may be empty if playoffs haven't started or player isn't in)
+    # Play-In tournament
+    time.sleep(_DELAY)
+    try:
+        pi = playergamelog.PlayerGameLog(
+            player_id=player_id, season=season, season_type_all_star="PlayIn"
+        )
+        pi_df = pi.get_data_frames()[0]
+        if not pi_df.empty:
+            pi_df["GAME_TYPE"] = "Play-In"
+            frames.append(pi_df)
+    except Exception:
+        pass
+
+    # Playoffs
     time.sleep(_DELAY)
     try:
         po = playergamelog.PlayerGameLog(
