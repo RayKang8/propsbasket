@@ -1,5 +1,16 @@
-  # Interactive (prompts you)                                                                                                                                       
-  python analyze.py                                         
+  Then every time you want to analyze a prop:
 
-  # One-liner
-  python analyze.py --player "LeBron James" --line "20+ points" --odds -166 --opponent "Golden State Warriors"
+  source .venv/bin/activate   # if not already activated
+
+  python analyze.py
+
+  It'll prompt you for 4 things:
+  Player name: Luke Kennard
+  Prop line (e.g. '20+ points'): 10.5+ points
+  American odds (e.g. -166 or +120): -280
+  Tonight's opponent: Houston Rockets
+
+  Or skip the prompts with one line:
+  python analyze.py --player "Luke Kennard" --line "10.5+ points" --odds -280 --opponent "Houston Rockets"
+
+  That's it. Takes about 10-15 seconds to pull live data then prints the full breakdown.
