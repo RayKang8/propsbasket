@@ -71,9 +71,8 @@ def _filter_to_current_team(game_logs: pd.DataFrame) -> tuple[pd.DataFrame, str 
 
 def _format_game_row(row: pd.Series, col: str, threshold: float) -> str:
     """Format a single game log row for display."""
-    date = str(row.get("GAME_DATE", ""))[:10]
+    date = str(row.get("GAME_DATE", ""))  # nba_api returns "APR 11, 2025"
     matchup = str(row.get("MATCHUP", ""))
-    # Extract opponent abbreviation from matchup ("LAL vs. GSW" or "LAL @ GSW")
     parts = matchup.split()
     opp = parts[-1] if len(parts) >= 3 else matchup
     val = row.get(col)

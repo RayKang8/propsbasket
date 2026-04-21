@@ -36,7 +36,7 @@ Examples:
     parser.add_argument("--line", help="Prop line, e.g. '20+ points'")
     parser.add_argument("--odds", type=int, help="American odds, e.g. -166 or +120")
     parser.add_argument("--opponent", help="Tonight's opponent (team name, city, or abbreviation)")
-    parser.add_argument("--season", default="2024-25", help="NBA season (default: 2024-25)")
+    parser.add_argument("--season", default="2025-26", help="NBA season (default: 2025-26)")
     args = parser.parse_args()
 
     if not all([args.player, args.line, args.odds is not None, args.opponent]):

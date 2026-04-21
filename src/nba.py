@@ -75,7 +75,7 @@ def find_player(name: str) -> dict | None:
     return None
 
 
-def get_game_logs(player_id: int, season: str = "2024-25") -> pd.DataFrame:
+def get_game_logs(player_id: int, season: str = "2025-26") -> pd.DataFrame:
     """Fetch regular season + playoff game logs for a player, combined.
 
     Playoff games are fetched separately and tagged with a GAME_TYPE column
@@ -111,13 +111,16 @@ def get_game_logs(player_id: int, season: str = "2024-25") -> pd.DataFrame:
 
     df = pd.concat(frames, ignore_index=True)
 
-    # Add PRA computed column
+    # Sort by actual date descending so playoffs appear first when most recent
+    df["_date_parsed"] = pd.to_datetime(df["GAME_DATE"], format="%b %d, %Y", errors="coerce")
+    df = df.sort_values("_date_parsed", ascending=False).drop(columns=["_date_parsed"]).reset_index(drop=True)
+
     if {"PTS", "REB", "AST"}.issubset(df.columns):
         df["PRA"] = df["PTS"] + df["REB"] + df["AST"]
     return df
 
 
-def get_team_def_ratings(season: str = "2024-25") -> pd.DataFrame:
+def get_team_def_ratings(season: str = "2025-26") -> pd.DataFrame:
     """Fetch all team advanced stats including DEF_RATING."""
     time.sleep(_DELAY)
     stats = leaguedashteamstats.LeagueDashTeamStats(
