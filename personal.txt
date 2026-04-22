@@ -1,6 +1,6 @@
   Then every time you want to analyze a prop:
 
-  source .venv/bin/activate   # if not already activated
+  source .venv/bin/activate  
 
   python analyze.py
 
